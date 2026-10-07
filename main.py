@@ -82,50 +82,73 @@ def main():
     pipeline = ClinicalPipeline()
 
     clinical_state = pipeline.run(patient)
+    from rag.retriever import MedicalRetriever
+    retriever = MedicalRetriever()
 
-    # =====================================
-    # DISPLAY
-    # =====================================
+    rag_result = retriever.retrieve(
+        clinical_state,
+        top_k=3
+    )
 
     print("\n==============================")
-    print("SYMPTOMS STATE")
+    print("RAG QUERY")
+    print("==============================")
+
+    print(rag_result.query)
+
+    print("\n==============================")
+    print("RETRIEVED MEDICAL EVIDENCE")
     print("==============================")
 
     print(
-        clinical_state.symptoms.model_dump_json(
+        rag_result.model_dump_json(
             indent=2
         )
     )
 
-    print("\n==============================")
-    print("LABORATORY STATE")
-    print("==============================")
+    # # =====================================
+    # # DISPLAY
+    # # =====================================
 
-    print(
-        clinical_state.laboratory.model_dump_json(
-            indent=2
-        )
-    )
+    # print("\n==============================")
+    # print("SYMPTOMS STATE")
+    # print("==============================")
 
-    print("\n==============================")
-    print("HISTORY STATE")
-    print("==============================")
+    # print(
+    #     clinical_state.symptoms.model_dump_json(
+    #         indent=2
+    #     )
+    # )
 
-    print(
-        clinical_state.history.model_dump_json(
-            indent=2
-        )
-    )
+    # print("\n==============================")
+    # print("LABORATORY STATE")
+    # print("==============================")
 
-    print("\n==============================")
-    print("CLINICAL STATE")
-    print("==============================")
+    # print(
+    #     clinical_state.laboratory.model_dump_json(
+    #         indent=2
+    #     )
+    # )
 
-    print(
-        clinical_state.model_dump_json(
-            indent=2
-        )
-    )
+    # print("\n==============================")
+    # print("HISTORY STATE")
+    # print("==============================")
+
+    # print(
+    #     clinical_state.history.model_dump_json(
+    #         indent=2
+    #     )
+    # )
+
+    # print("\n==============================")
+    # print("CLINICAL STATE")
+    # print("==============================")
+
+    # print(
+    #     clinical_state.model_dump_json(
+    #         indent=2
+    #     )
+    # )
 
 
 if __name__ == "__main__":
