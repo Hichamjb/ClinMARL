@@ -1,137 +1,317 @@
-from pydantic import BaseModel
+# rl/state_encoder.py
 
-from models.clinical_state import ClinicalState
+from typing import Any
+
+import numpy as np
 
 
-class RLState(BaseModel):
-    age_over_50: int
+# These IDs must match the action IDs in the dataset.
+NUM_ACTIONS = 7
 
-    fatigue: int
-    weight_loss: int
-    breast_lump: int
+VITAL_KEYS = [
+    "heart_rate",
+    "systolic_bp",
+    "diastolic_bp",
+    "respiratory_rate",
+    "temperature_c",
+    "spo2",
+    "gcs",
+]
 
-    family_history_breast_cancer: int
+LAB_STATUS_OPTIONS = [
+    "not_ordered",
+    "ordered",
+    "available",
+    "reviewed",
+    "unknown",
+]
 
-    low_hemoglobin: int
+DIAGNOSTICS_STATUS_OPTIONS = [
+    "not_ordered",
+    "ordered",
+    "available",
+    "completed",
+    "reviewed",
+    "unknown",
+]
 
-    hypertension: int
 
-    def to_tuple(self) -> tuple:
-        """
-        Convert the RL state into a tuple.
+def _number(value: Any, default: float = 0.0) -> float:
+    """Safely convert a value into a finite float."""
 
-        Q-Learning will use this tuple
-        as the state identifier.
-        """
+    if isinstance(value, bool):
+        return float(value)
 
-        return (
-            self.age_over_50,
-            self.fatigue,
-            self.weight_loss,
-            self.breast_lump,
-            self.family_history_breast_cancer,
-            self.low_hemoglobin,
-            self.hypertension,
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return default
+
+    if not np.isfinite(result):
+        return default
+
+    return result
+
+
+def _one_hot(value: str, categories: list[str]) -> list[float]:
+    """One-hot encode a categorical value."""
+
+    if value not in categories:
+        value = "unknown"
+
+    return [
+        1.0 if value == category else 0.0
+        for category in categories
+    ]
+
+
+def encode_state(state: dict[str, Any]) -> np.ndarray:
+    """
+    Convert a synthetic clinical state into a fixed-size
+    numerical feature vector.
+
+    This encoder is intended for software experiments
+    with synthetic data, not real clinical decisions.
+    """
+
+    features: list[float] = []
+
+    # --------------------------------------------------
+    # 1. Severity
+    # --------------------------------------------------
+
+    features.append(
+        _number(state.get("severity_index"))
+    )
+
+    # --------------------------------------------------
+    # 2. Vital signs
+    # --------------------------------------------------
+
+    vitals = state.get("vitals") or {}
+
+    # Broad scales for numerical stability.
+    # These are engineering scales, not clinical thresholds.
+    vital_scales = {
+        "heart_rate": 200.0,
+        "systolic_bp": 250.0,
+        "diastolic_bp": 150.0,
+        "respiratory_rate": 60.0,
+        "temperature_c": 45.0,
+        "spo2": 100.0,
+        "gcs": 15.0,
+    }
+
+    for key in VITAL_KEYS:
+        value = vitals.get(key)
+
+        # Value plus an indicator showing whether it exists.
+        features.append(
+            _number(value) / vital_scales[key]
+        )
+        features.append(
+            1.0 if value is not None else 0.0
         )
 
+    # --------------------------------------------------
+    # 3. Risk scores
+    # --------------------------------------------------
 
-class StateEncoder:
+    risk_scores = state.get("risk_scores") or {}
 
-    def encode(
-        self,
-        clinical_state: ClinicalState
-    ) -> RLState:
+    features.append(
+        _number(risk_scores.get("qsofa")) / 3.0
+    )
 
-        # --------------------------------
-        # Age
-        # --------------------------------
+    features.append(
+        _number(risk_scores.get("news2_approx")) / 20.0
+    )
 
-        age_over_50 = int(
-            clinical_state.age >= 50
+    features.append(
+        _number(
+            risk_scores.get("sepsis_risk_synthetic")
+        )
+    )
+
+    # --------------------------------------------------
+    # 4. Symptoms
+    # --------------------------------------------------
+
+    symptoms = state.get("symptoms") or []
+
+    severe_count = 0
+    moderate_count = 0
+    mild_count = 0
+
+    for symptom in symptoms:
+        severity = str(
+            symptom.get("severity", "")
+        ).lower()
+
+        if severity == "severe":
+            severe_count += 1
+        elif severity == "moderate":
+            moderate_count += 1
+        elif severity == "mild":
+            mild_count += 1
+
+    features.extend([
+        len(symptoms) / 20.0,
+        severe_count / 20.0,
+        moderate_count / 20.0,
+        mild_count / 20.0,
+    ])
+
+    # --------------------------------------------------
+    # 5. Medical history
+    # --------------------------------------------------
+
+    history = state.get("medical_history") or []
+
+    features.append(
+        len(history) / 20.0
+    )
+
+    # --------------------------------------------------
+    # 6. Laboratory status
+    # --------------------------------------------------
+
+    labs_status = str(
+        state.get("labs_status", "unknown")
+    ).lower()
+
+    features.extend(
+        _one_hot(
+            labs_status,
+            LAB_STATUS_OPTIONS,
+        )
+    )
+
+    # Laboratory results can be null or a dictionary.
+    lab_results = state.get("laboratory_results")
+
+    features.append(
+        1.0 if lab_results is not None else 0.0
+    )
+
+    # Number of critical flags.
+    critical_flags = state.get("critical_lab_flags") or []
+
+    features.append(
+        len(critical_flags) / 20.0
+    )
+
+    # --------------------------------------------------
+    # 7. Diagnostic status
+    # --------------------------------------------------
+
+    diagnostics_status = str(
+        state.get("diagnostics_status", "unknown")
+    ).lower()
+
+    features.extend(
+        _one_hot(
+            diagnostics_status,
+            DIAGNOSTICS_STATUS_OPTIONS,
+        )
+    )
+
+    # --------------------------------------------------
+    # 8. Review flags and pending orders
+    # --------------------------------------------------
+
+    features.append(
+        float(bool(state.get("labs_reviewed", False)))
+    )
+
+    features.append(
+        float(bool(state.get("medication_reviewed", False)))
+    )
+
+    pending_orders = state.get("pending_orders") or []
+
+    features.append(
+        len(pending_orders) / 20.0
+    )
+
+    # --------------------------------------------------
+    # 9. Agent-derived features
+    # --------------------------------------------------
+
+    agent_features = state.get("agent_features") or {}
+
+    symptoms_agent = agent_features.get(
+        "SymptomsAgent", {}
+    )
+
+    history_agent = agent_features.get(
+        "HistoryAgent", {}
+    )
+
+    features.append(
+        _number(
+            symptoms_agent.get("symptom_count")
+        ) / 20.0
+    )
+
+    features.append(
+        _number(
+            symptoms_agent.get("severe_symptom_count")
+        ) / 20.0
+    )
+
+    features.append(
+        _number(
+            history_agent.get("comorbidity_count")
+        ) / 20.0
+    )
+
+    # --------------------------------------------------
+    # 10. Action mask
+    # --------------------------------------------------
+
+    # This represents which actions are permitted by
+    # the synthetic dataset at the current state.
+    action_mask = state.get("action_mask")
+
+    if action_mask is None:
+        action_mask = [True] * NUM_ACTIONS
+
+    if len(action_mask) != NUM_ACTIONS:
+        raise ValueError(
+            f"Expected {NUM_ACTIONS} action-mask entries, "
+            f"received {len(action_mask)}"
         )
 
-        # --------------------------------
-        # Symptoms
-        # --------------------------------
+    features.extend(
+        float(bool(allowed))
+        for allowed in action_mask
+    )
 
-        symptom_names = {
-            symptom.name.lower()
-            for symptom in clinical_state.symptoms.symptoms
-        }
+    result = np.asarray(features, dtype=np.float32)
 
-        fatigue = int(
-            "fatigue" in symptom_names
+    if not np.all(np.isfinite(result)):
+        raise ValueError(
+            "State encoding produced NaN or infinite values"
         )
 
-        weight_loss = int(
-            "weight_loss" in symptom_names
+    return result
+
+
+def encode_action_mask(
+    state: dict[str, Any],
+) -> np.ndarray:
+    """Return the permitted-action mask as a Boolean array."""
+
+    mask = state.get("action_mask")
+
+    if mask is None:
+        mask = [True] * NUM_ACTIONS
+
+    if len(mask) != NUM_ACTIONS:
+        raise ValueError(
+            f"Expected {NUM_ACTIONS} action-mask entries, "
+            f"received {len(mask)}"
         )
 
-        breast_lump = int(
-            "breast_lump" in symptom_names
-        )
-
-        # --------------------------------
-        # Family history
-        # --------------------------------
-
-        family_history = {
-            condition.lower()
-            for condition
-            in clinical_state.history.family_history
-        }
-
-        family_history_breast_cancer = int(
-            "breast_cancer" in family_history
-        )
-
-        # --------------------------------
-        # Laboratory
-        # --------------------------------
-
-        low_hemoglobin = 0
-
-        for lab in clinical_state.laboratory.laboratory:
-
-            if lab.name.lower() == "hemoglobin":
-
-                if lab.value < 12:
-
-                    low_hemoglobin = 1
-
-        # --------------------------------
-        # Medical conditions
-        # --------------------------------
-
-        conditions = {
-            condition.lower()
-            for condition
-            in clinical_state.history.conditions
-        }
-
-        hypertension = int(
-            "hypertension" in conditions
-        )
-
-        # --------------------------------
-        # Build RL state
-        # --------------------------------
-
-        return RLState(
-
-            age_over_50=age_over_50,
-
-            fatigue=fatigue,
-
-            weight_loss=weight_loss,
-
-            breast_lump=breast_lump,
-
-            family_history_breast_cancer=(
-                family_history_breast_cancer
-            ),
-
-            low_hemoglobin=low_hemoglobin,
-
-            hypertension=hypertension,
-        )
+    return np.asarray(mask, dtype=bool)

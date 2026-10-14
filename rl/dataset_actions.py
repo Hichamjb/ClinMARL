@@ -1,0 +1,14 @@
+from enum import IntEnum
+
+
+class DatasetAction(IntEnum):
+    OBSERVATION = 0
+    ORDER_LAB_TEST = 1
+    REVIEW_LAB_RESULTS = 2
+    MEDICATION_REVIEW = 3
+    REQUEST_DIAGNOSTIC_PROCEDURE = 4
+    CLINICAL_REVIEW = 5
+    SPECIALIST_REFERRAL = 6
+
+
+NUM_DATASET_ACTIONS = len(DatasetAction)
